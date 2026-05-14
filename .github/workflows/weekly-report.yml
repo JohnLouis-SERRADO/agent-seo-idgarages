@@ -13,11 +13,6 @@ on:
 permissions:
   contents: read  # uniquement lecture — la DB n'est pas modifiée par le report
 
-# Force Node.js 24 pour les actions JavaScript (silencie le warning de
-# dépréciation de Node.js 20, en place jusqu'à septembre 2026).
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   report:
     runs-on: ubuntu-latest
@@ -25,10 +20,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip

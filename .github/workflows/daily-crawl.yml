@@ -11,12 +11,6 @@ on:
 permissions:
   contents: write
 
-# Force Node.js 24 pour les actions JavaScript (checkout, setup-python).
-# Sans cela, GitHub affiche un warning de dépréciation de Node.js 20 valable
-# jusqu'en septembre 2026. Cf. https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   crawl:
     runs-on: ubuntu-latest
@@ -24,10 +18,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
