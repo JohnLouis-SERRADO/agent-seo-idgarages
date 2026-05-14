@@ -1,0 +1,79 @@
+name: Daily SEO Crawl
+
+# Tourne tous les jours à 03h00 UTC (≈ 04h en hiver / 05h en été à Paris).
+# Heure choisie pour éviter le trafic du site cible.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:  # bouton "Run workflow" pour déclenchement manuel
+
+# Permission d'écriture pour committer la DB mise à jour sur la branche `data`.
+permissions:
+  contents: write
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ─── Restauration de la DB depuis la branche `data` ───────────────────
+      # La branche `data` est une branche orpheline qui contient uniquement
+      # le fichier seo_monitor.db. Au tout premier run elle n'existe pas
+      # encore — on démarre alors avec une DB vide, et `data` sera créée à
+      # l'étape de sauvegarde.
+      - name: Restore SQLite DB
+        run: |
+          mkdir -p data
+          if git ls-remote --heads origin data | grep -q data; then
+            echo "Pulling DB from data branch…"
+            git fetch origin data --depth=1
+            git show origin/data:seo_monitor.db > data/seo_monitor.db
+            ls -lh data/seo_monitor.db
+          else
+            echo "No data branch yet — starting with empty DB"
+          fi
+
+      # ─── Crawl ────────────────────────────────────────────────────────────
+      - name: Run daily crawl
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TARGET_SITE:       ${{ vars.TARGET_SITE }}
+          MAX_PAGES_PER_DAY: ${{ vars.MAX_PAGES_PER_DAY }}
+          SMTP_USER:         ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:     ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM:        ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:          ${{ secrets.EMAIL_TO }}
+        run: python main.py crawl
+
+      # ─── Sauvegarde de la DB sur la branche `data` ────────────────────────
+      # Stratégie : on garde un seul commit dans `data` (force-push). Ça évite
+      # que la branche grossisse de 10 Mo par jour pour rien. Le passé n'est
+      # pas crucial — ce qui compte c'est la photo la plus récente.
+      - name: Save SQLite DB to data branch
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # On extrait la DB avant de changer de branche (sinon elle disparaît)
+          cp data/seo_monitor.db /tmp/seo_monitor.db
+
+          # Recrée une branche orpheline fraîche à chaque run
+          git checkout --orphan tmp-data
+          git rm -rf . 2>/dev/null || true
+          cp /tmp/seo_monitor.db seo_monitor.db
+          git add seo_monitor.db
+          git commit -m "Update DB ($(date -u +%FT%TZ))"
+          git push --force origin tmp-data:data

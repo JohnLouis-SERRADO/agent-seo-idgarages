@@ -260,7 +260,10 @@ R : Change `TARGET_SITE` dans `.env`. Pour monitorer plusieurs sites en parallè
 
 ---
 
-## 7. Checklist finale de déploiement
+## 7. Checklist finale de déploiement (mode local / VPS)
+
+> Pour le déploiement **GitHub Actions sans serveur**, voir §8 ci-dessous.
+
 
 Avant de mettre en production, coche chaque case :
 
@@ -281,7 +284,88 @@ Avant de mettre en production, coche chaque case :
 
 ---
 
-## 8. Sécurité et bonnes pratiques
+## 8. Déploiement sans serveur (GitHub Actions — recommandé si tu n'as pas de VPS)
+
+Le repo contient déjà deux workflows GitHub Actions prêts à l'emploi dans `.github/workflows/`. Tout tourne **gratuitement** sur l'infra GitHub, sans serveur à entretenir.
+
+### Comment ça marche
+
+```
+┌─ daily-crawl.yml ──── tous les jours 03h00 UTC ──────────────┐
+│  1. checkout code + Python 3.11 + dépendances                │
+│  2. pull la DB depuis la branche orpheline `data`            │
+│  3. python main.py crawl                                      │
+│  4. force-push la DB mise à jour vers la branche `data`      │
+└──────────────────────────────────────────────────────────────┘
+
+┌─ weekly-report.yml ── vendredi 10h00 UTC (= 11h Paris hiver) ┐
+│  1. checkout + dépendances                                   │
+│  2. pull la DB depuis `data`                                 │
+│  3. python main.py report   →  email envoyé via Gmail        │
+└──────────────────────────────────────────────────────────────┘
+```
+
+> 📌 La DB SQLite est stockée sur une **branche `data`** orpheline (créée auto au 1er run). À chaque crawl, GitHub Actions force-push la version à jour. Pas de service externe, pas de stockage à gérer.
+
+### Configuration des secrets et variables (~3 minutes)
+
+Va dans ton repo GitHub → **Settings → Secrets and variables → Actions**.
+
+**Onglet "Secrets" → "New repository secret"** (à ajouter un par un) :
+
+| Nom | Valeur |
+|---|---|
+| `ANTHROPIC_API_KEY` | `sk-ant-api03-…` |
+| `SMTP_USER` | `ton.email@gmail.com` |
+| `SMTP_PASSWORD` | Le mot de passe d'application Gmail (16 caractères, sans espaces) |
+| `EMAIL_FROM` | `ton.email@gmail.com` |
+| `EMAIL_TO` | `destinataire@example.com` |
+
+**Onglet "Variables" → "New repository variable"** :
+
+| Nom | Valeur |
+|---|---|
+| `TARGET_SITE` | `https://www.idgarages.com` |
+| `MAX_PAGES_PER_DAY` | `500` |
+
+> 💡 Pourquoi *secrets* vs *variables* ? Les **secrets** sont chiffrés et masqués dans les logs (clé API, mots de passe). Les **variables** sont en clair (config non sensible).
+
+### Premier lancement
+
+1. Va dans l'onglet **Actions** de ton repo
+2. Clique sur **Daily SEO Crawl** dans la barre latérale
+3. Clique **Run workflow** → branche `claude/explain-functionality-Zm57g` (ou `main` une fois mergé) → **Run workflow**
+4. Attends 1-2 min, ouvre le run pour vérifier les logs
+5. Si tout est vert : la branche `data` est créée avec la DB initiale
+6. Les exécutions suivantes seront automatiques selon le cron
+
+### Vérification que le rapport hebdomadaire fonctionne
+
+Avant d'attendre vendredi, lance le rapport manuellement :
+1. Onglet **Actions** → **Weekly SEO Report** → **Run workflow**
+2. Vérifie l'arrivée de l'email
+3. Si erreur SMTP : c'est probablement le mot de passe d'application (pas le mot de passe Google normal)
+
+### Quotas et coûts
+
+| Élément | Limite gratuite | Ta conso estimée |
+|---|---|---|
+| Minutes GitHub Actions (repo privé) | 2000 / mois | ~450-500 / mois |
+| Minutes GitHub Actions (repo public) | illimité | — |
+| Anthropic API | facturé à l'usage | ~0,05-0,30 € / rapport (1 par semaine) |
+| Gmail SMTP | 500 mails/jour | 1 mail/semaine |
+
+**Coût total : 0 € + ~1 €/mois Anthropic.**
+
+### Quelques notes
+
+- Le cron GitHub Actions n'est **pas précis à la seconde** — un retard de 5-30 min en heure de pointe est possible. Pour un rapport hebdomadaire, c'est sans impact.
+- Si tu veux changer l'heure : édite `.github/workflows/*.yml`, ligne `cron:`. Le format est `min h * * jour-de-semaine` (0=dim, 5=vendredi).
+- La branche `data` ne doit **jamais** être supprimée — c'est ta mémoire à long terme. Elle est protégée par défaut puisqu'aucun humain ne push dessus.
+
+---
+
+## 9. Sécurité et bonnes pratiques
 
 - 🔐 **Ne jamais commiter `.env`** — il contient ta clé API Anthropic et ton mot de passe Gmail
 - 🐢 **Respect du site** : 1 req/sec par défaut, User-Agent identifiable, respect de robots.txt
