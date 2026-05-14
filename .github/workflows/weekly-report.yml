@@ -13,6 +13,11 @@ on:
 permissions:
   contents: read  # uniquement lecture — la DB n'est pas modifiée par le report
 
+# Force Node.js 24 pour les actions JavaScript (silencie le warning de
+# dépréciation de Node.js 20, en place jusqu'à septembre 2026).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   report:
     runs-on: ubuntu-latest
