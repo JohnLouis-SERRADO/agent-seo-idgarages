@@ -1,0 +1,219 @@
+"""Couche de persistance SQLite.
+
+Le schéma comporte 3 tables :
+- urls         : toutes les URLs connues + last_crawled_at (pour rotation)
+- errors       : journal de toutes les erreurs détectées
+- crawl_runs   : historique des cycles de crawl
+
+La rotation des URLs fonctionne ainsi : à chaque cycle quotidien, on sélectionne
+en priorité les URLs jamais crawlées, puis celles dont last_crawled_at est le
+plus ancien. Une page crawlée hier ne sera donc pas re-crawlée aujourd'hui tant
+qu'il reste d'autres pages à voir.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Iterator
+
+from config import DATABASE_PATH
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS urls (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    url             TEXT UNIQUE NOT NULL,
+    first_seen      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_crawled    TIMESTAMP,
+    last_status     INTEGER,
+    last_content_type TEXT,
+    redirect_target TEXT,
+    crawl_count     INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_urls_last_crawled ON urls(last_crawled);
+
+CREATE TABLE IF NOT EXISTS errors (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    url             TEXT NOT NULL,
+    status_code     INTEGER,
+    error_type      TEXT NOT NULL,
+    found_on        TEXT,
+    detected_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    details         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_errors_detected_at ON errors(detected_at);
+CREATE INDEX IF NOT EXISTS idx_errors_type ON errors(error_type);
+
+CREATE TABLE IF NOT EXISTS crawl_runs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at        TIMESTAMP,
+    pages_crawled   INTEGER DEFAULT 0,
+    errors_found    INTEGER DEFAULT 0,
+    status          TEXT DEFAULT 'running'
+);
+"""
+
+
+def init_db(path: Path = DATABASE_PATH) -> None:
+    """Crée les tables si elles n'existent pas. Idempotent."""
+    with sqlite3.connect(path) as conn:
+        conn.executescript(SCHEMA)
+
+
+@contextmanager
+def get_conn(path: Path = DATABASE_PATH) -> Iterator[sqlite3.Connection]:
+    """Context manager qui ouvre/ferme proprement la connexion SQLite."""
+    conn = sqlite3.connect(path, timeout=30.0)
+    conn.row_factory = sqlite3.Row  # accès par nom de colonne (row["url"])
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# --- URLs ---------------------------------------------------------------------
+
+
+def add_url_if_unknown(url: str) -> bool:
+    """Insère une URL si elle n'existe pas déjà. Retourne True si ajout réussi."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO urls(url) VALUES (?)",
+            (url,),
+        )
+        return cur.rowcount > 0
+
+
+def update_url_status(
+    url: str,
+    status_code: int,
+    content_type: str | None = None,
+    redirect_target: str | None = None,
+) -> None:
+    """Met à jour le statut HTTP et la date du dernier crawl."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE urls
+               SET last_crawled = CURRENT_TIMESTAMP,
+                   last_status = ?,
+                   last_content_type = ?,
+                   redirect_target = ?,
+                   crawl_count = crawl_count + 1
+             WHERE url = ?
+            """,
+            (status_code, content_type, redirect_target, url),
+        )
+
+
+def get_urls_to_crawl(limit: int) -> list[str]:
+    """Sélectionne les URLs à crawler ce cycle.
+
+    Priorité : jamais vues (last_crawled IS NULL) d'abord, puis les plus
+    anciennes. Cela garantit qu'on ne recrawle pas les mêmes pages chaque jour.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT url FROM urls
+             ORDER BY last_crawled IS NULL DESC,  -- NULL en premier
+                      last_crawled ASC
+             LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [row["url"] for row in rows]
+
+
+def count_urls() -> int:
+    with get_conn() as conn:
+        return conn.execute("SELECT COUNT(*) FROM urls").fetchone()[0]
+
+
+# --- Erreurs ------------------------------------------------------------------
+
+
+def log_error(
+    url: str,
+    error_type: str,
+    status_code: int | None = None,
+    found_on: str | None = None,
+    details: str | None = None,
+) -> None:
+    """Enregistre une erreur détectée pendant le crawl."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO errors(url, status_code, error_type, found_on, details)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (url, status_code, error_type, found_on, details),
+        )
+
+
+def get_errors_since(days: int = 7) -> list[dict]:
+    """Récupère toutes les erreurs des N derniers jours."""
+    since = datetime.now() - timedelta(days=days)
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT url, status_code, error_type, found_on, detected_at, details
+              FROM errors
+             WHERE detected_at >= ?
+             ORDER BY detected_at DESC
+            """,
+            (since.isoformat(),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+# --- Cycles de crawl ----------------------------------------------------------
+
+
+def start_crawl_run() -> int:
+    """Crée une ligne crawl_runs et retourne son ID."""
+    with get_conn() as conn:
+        cur = conn.execute("INSERT INTO crawl_runs(status) VALUES ('running')")
+        return cur.lastrowid or 0
+
+
+def end_crawl_run(run_id: int, pages: int, errors: int, status: str = "success") -> None:
+    """Clôture un cycle de crawl."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE crawl_runs
+               SET ended_at = CURRENT_TIMESTAMP,
+                   pages_crawled = ?,
+                   errors_found = ?,
+                   status = ?
+             WHERE id = ?
+            """,
+            (pages, errors, status, run_id),
+        )
+
+
+def get_recent_runs(days: int = 7) -> list[dict]:
+    """Retourne les cycles de crawl des N derniers jours."""
+    since = datetime.now() - timedelta(days=days)
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, started_at, ended_at, pages_crawled, errors_found, status
+              FROM crawl_runs
+             WHERE started_at >= ?
+             ORDER BY started_at DESC
+            """,
+            (since.isoformat(),),
+        ).fetchall()
+        return [dict(row) for row in rows]
