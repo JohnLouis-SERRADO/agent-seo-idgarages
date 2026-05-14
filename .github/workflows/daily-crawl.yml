@@ -54,13 +54,14 @@ jobs:
       # ─── Crawl ────────────────────────────────────────────────────────────
       - name: Run daily crawl
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TARGET_SITE:       ${{ vars.TARGET_SITE }}
-          MAX_PAGES_PER_DAY: ${{ vars.MAX_PAGES_PER_DAY }}
-          SMTP_USER:         ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD:     ${{ secrets.SMTP_PASSWORD }}
-          EMAIL_FROM:        ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO:          ${{ secrets.EMAIL_TO }}
+          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+          TARGET_SITE:         ${{ vars.TARGET_SITE }}
+          MAX_PAGES_PER_DAY:   ${{ vars.MAX_PAGES_PER_DAY }}
+          RESPECT_ROBOTS_TXT:  ${{ vars.RESPECT_ROBOTS_TXT }}
+          SMTP_USER:           ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:       ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM:          ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:            ${{ secrets.EMAIL_TO }}
         run: python main.py crawl
 
       # ─── Sauvegarde de la DB sur la branche `data` ────────────────────────
