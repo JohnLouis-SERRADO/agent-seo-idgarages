@@ -42,6 +42,7 @@ from config import (
     CRAWL_DELAY_SECONDS,
     MAX_PAGES_PER_DAY,
     REQUEST_TIMEOUT,
+    RESPECT_ROBOTS_TXT,
     TARGET_SITE,
 )
 from database import (
@@ -139,8 +140,8 @@ def crawl_page(
 
     Toute exception est attrapée → le cycle continue.
     """
-    if not robots.can_fetch(BROWSER_USER_AGENT, url):
-        log.info("robots.txt interdit %s — skip", url)
+    if RESPECT_ROBOTS_TXT and not robots.can_fetch(BROWSER_USER_AGENT, url):
+        log.info("robots.txt interdit %s — skip (mets RESPECT_ROBOTS_TXT=false pour ignorer)", url)
         update_url_status(url, status_code=-1, content_type="blocked_by_robots")
         return []
 
@@ -220,6 +221,11 @@ def run_daily_crawl() -> CrawlStats:
 
     add_url_if_unknown(TARGET_SITE + "/")
     robots = _load_robots()
+    if not RESPECT_ROBOTS_TXT:
+        log.warning(
+            "RESPECT_ROBOTS_TXT=false → robots.txt sera ignoré. "
+            "OK uniquement pour monitorer SON PROPRE site."
+        )
 
     try:
         to_crawl = get_urls_to_crawl(limit=MAX_PAGES_PER_DAY)

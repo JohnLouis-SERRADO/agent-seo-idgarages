@@ -36,6 +36,12 @@ CRAWL_DELAY_SECONDS = float(_env("CRAWL_DELAY_SECONDS", "1.0"))
 REQUEST_TIMEOUT = int(_env("REQUEST_TIMEOUT", "15"))
 USER_AGENT = "IDGaragesSEOBot/1.0 (+monitoring interne)"
 
+# Respecter le robots.txt du site cible ?
+# - True (défaut) : on s'arrête sur les pages interdites par robots.txt
+# - False : on ignore robots.txt (utile pour monitorer SON PROPRE site dont
+#   le robots.txt interdit globalement les crawlers non-référencés)
+RESPECT_ROBOTS_TXT = _env("RESPECT_ROBOTS_TXT", "true").lower() in ("true", "1", "yes")
+
 # --- SMTP ---
 SMTP_HOST = _env("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(_env("SMTP_PORT", "587"))
