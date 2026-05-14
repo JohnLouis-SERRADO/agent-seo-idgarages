@@ -54,8 +54,13 @@ def daily_crawl_job() -> None:
         log.exception("Crash du job de crawl — l'agent continue de tourner")
 
 
-def weekly_report_job() -> None:
-    """Job hebdomadaire : génère le rapport et l'envoie par email. Vendredi 11h."""
+def weekly_report_job() -> bool:
+    """Job hebdomadaire : génère le rapport et l'envoie par email. Vendredi 11h.
+
+    Retourne True si l'email a bien été envoyé, False sinon. Permet à la CLI
+    de sortir avec un code != 0 quand l'envoi échoue (= workflow GitHub Actions
+    en rouge), au lieu de planter en silence.
+    """
     log.info(">>> Lancement du job hebdomadaire (vendredi %s)", datetime.now())
     try:
         html = generate_weekly_report()
@@ -64,8 +69,10 @@ def weekly_report_job() -> None:
             log.info("Rapport hebdomadaire envoyé avec succès")
         else:
             log.error("Échec de l'envoi du rapport")
+        return ok
     except Exception:
         log.exception("Crash du job de rapport — l'agent continue de tourner")
+        return False
 
 
 # --- Mode démon ---------------------------------------------------------------
@@ -127,7 +134,9 @@ def main() -> None:
     elif arg == "crawl":
         daily_crawl_job()
     elif arg == "report":
-        weekly_report_job()
+        # Code de sortie != 0 si l'envoi a échoué → workflow GitHub Actions rouge.
+        if not weekly_report_job():
+            sys.exit(1)
     elif arg == "daemon":
         run_daemon()
     else:
