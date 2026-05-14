@@ -51,6 +51,37 @@ _BASE_STYLE = {
     "font.size": 11,
 }
 
+# Jours de la semaine en français (d.weekday() : 0 = lundi … 6 = dimanche)
+_DAY_NAMES_FR = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+
+# Libellés humains pour chaque type d'erreur stocké en base.
+# Les types `client_error_<code>` sont dynamiques (code HTTP exact), on les
+# gère séparément dans _humanize_error_type().
+_ERROR_LABELS_FR: dict[str, str] = {
+    "not_found_404":         "Page introuvable (404)",
+    "server_error_5xx":      "Erreur serveur (5xx)",
+    "forbidden_403":         "Accès refusé (403)",
+    "long_redirect_chain":   "Redirections en chaîne",
+    "timeout":               "Délai de réponse dépassé",
+    "connection_error":      "Erreur de connexion",
+    "navigation_error":      "Erreur de navigation",
+    "unexpected_error":      "Erreur imprévue",
+}
+
+
+def _humanize_error_type(error_type: str) -> str:
+    """Convertit un identifiant technique d'erreur en libellé français lisible.
+
+    Gère aussi les types dynamiques `client_error_<code>` (ex. 410, 429).
+    """
+    if error_type in _ERROR_LABELS_FR:
+        return _ERROR_LABELS_FR[error_type]
+    if error_type.startswith("client_error_"):
+        code = error_type.split("_")[-1]
+        return f"Erreur client ({code})"
+    # Fallback : on retourne tel quel pour ne jamais perdre d'info
+    return error_type
+
 
 def _fig_to_png(fig) -> bytes:
     """Sérialise une figure matplotlib en PNG (bytes) puis ferme la figure."""
@@ -67,7 +98,12 @@ def chart_errors_per_day(errors_per_day: dict[str, int], days: int = 7) -> bytes
     # On reconstruit la séquence complète (y compris jours à 0)
     today = datetime.now().date()
     dates = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
-    labels = [d.strftime("%a\n%d/%m") for d in dates]
+    # Libellés en français (Lun, Mar…) — on n'utilise pas la locale système
+    # car elle dépend de l'environnement (CI Ubuntu = en_US par défaut)
+    labels = [
+        f"{_DAY_NAMES_FR[d.weekday()]}\n{d.strftime('%d/%m')}"
+        for d in dates
+    ]
     values = [errors_per_day.get(d.isoformat(), 0) for d in dates]
 
     fig, ax = plt.subplots(figsize=(8, 3.5))
@@ -175,15 +211,17 @@ def chart_errors_by_type(errors: list[dict]) -> bytes | None:
     if not counts:
         return None
 
-    labels = [t for t, _ in counts]
+    # Étiquettes en français lisible plutôt que les IDs techniques
+    labels = [_humanize_error_type(t) for t, _ in counts]
     values = [n for _, n in counts]
     total = sum(values)
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    # Légende latérale au lieu de labels autour du donut : évite les
+    # chevauchements quand certaines parts sont très petites (< 5%).
+    fig, ax = plt.subplots(figsize=(9, 4.5))
     wedges, _texts, autotexts = ax.pie(
         values,
-        labels=labels,
-        autopct=lambda pct: f"{pct:.0f}%" if pct >= 5 else "",
+        autopct=lambda pct: f"{pct:.0f}%" if pct >= 4 else "",
         colors=DONUT_COLORS[: len(values)],
         wedgeprops={"width": 0.45, "edgecolor": "white", "linewidth": 2},
         textprops={"fontsize": 10, "color": "#333"},
@@ -193,6 +231,17 @@ def chart_errors_by_type(errors: list[dict]) -> bytes | None:
     for at in autotexts:
         at.set_color("white")
         at.set_fontweight("bold")
+
+    # Légende avec libellé + valeur absolue (ex: "Page introuvable (404) — 32")
+    legend_labels = [f"{lab}  —  {val}" for lab, val in zip(labels, values)]
+    ax.legend(
+        wedges,
+        legend_labels,
+        loc="center left",
+        bbox_to_anchor=(1.05, 0.5),
+        frameon=False,
+        fontsize=10,
+    )
 
     ax.set_title(
         f"Répartition par type ({total} erreurs au total)",

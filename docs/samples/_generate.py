@@ -54,12 +54,18 @@ def realistic_sample_data() -> tuple[list[dict], dict[str, int]]:
         "/":            1,
     }
 
+    # Tous les types d'erreur que le crawler peut produire, avec une
+    # distribution réaliste pour un site e-commerce français (les 404
+    # dominent généralement, les 5xx sont plus rares mais critiques).
     type_distribution = {
-        "not_found_404":         48,  # le gros morceau
-        "long_redirect_chain":   17,
-        "server_error_5xx":      10,
-        "timeout":                6,
-        "forbidden_403":          4,
+        "not_found_404":         32,  # URLs supprimées / mal recopiées
+        "long_redirect_chain":   18,  # héritage de migrations passées
+        "server_error_5xx":      12,  # plantages serveur ponctuels
+        "timeout":                9,  # pages lentes à répondre
+        "forbidden_403":          6,  # zones réservées atteintes par erreur
+        "client_error_410":       4,  # 410 Gone (URL retirée intentionnellement)
+        "client_error_429":       3,  # 429 Too Many Requests (rate-limit)
+        "navigation_error":       1,  # crash du navigateur Playwright (rare)
     }
 
     errors: list[dict] = []
