@@ -29,6 +29,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Playwright a besoin du binaire Chromium + des libs système
+      # (~180 Mo). `install --with-deps` télécharge tout en une commande.
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
       # ─── Restauration de la DB depuis la branche `data` ───────────────────
       # La branche `data` est une branche orpheline qui contient uniquement
       # le fichier seo_monitor.db. Au tout premier run elle n'existe pas
