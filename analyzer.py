@@ -17,8 +17,9 @@ from urllib.parse import urlparse
 
 import anthropic
 
+from charts import build_weekly_charts
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, TARGET_SITE
-from database import get_errors_since, get_recent_runs
+from database import get_errors_per_day, get_errors_since, get_recent_runs
 
 log = logging.getLogger(__name__)
 
@@ -118,27 +119,37 @@ def _build_user_prompt(errors: list[dict], runs: list[dict]) -> str:
 Génère maintenant le rapport HTML selon les règles du system prompt."""
 
 
-def generate_weekly_report() -> str:
-    """Génère le rapport HTML hebdomadaire via Claude.
+def generate_weekly_report() -> tuple[str, dict[str, bytes]]:
+    """Génère le rapport HTML hebdomadaire via Claude + graphiques inline.
 
-    Retourne directement le HTML prêt à être envoyé par email.
-    En cas d'erreur API, retourne un rapport de secours minimal.
+    Retourne (html_complet, dict_charts) où :
+    - html_complet : le HTML prêt à l'envoi (graphiques en haut, analyse Claude
+      en dessous). Les graphiques sont référencés via <img src="cid:...">.
+    - dict_charts : {content_id: png_bytes} à attacher au MIME.
+
+    En cas d'erreur API Anthropic, le HTML utilise le rapport de secours mais
+    les graphiques restent présents.
     """
     log.info("Génération du rapport hebdomadaire via Claude…")
 
     errors = get_errors_since(days=7)
     runs = get_recent_runs(days=7)
+    errors_per_day = get_errors_per_day(days=7)
 
+    # Les graphiques sont indépendants de l'API Claude : on les fait d'abord
+    # pour qu'ils soient inclus même si Claude tombe.
+    charts_html, charts_dict = build_weekly_charts(errors, errors_per_day)
+
+    # --- Analyse Claude (peut échouer) ---
     if not ANTHROPIC_API_KEY:
         log.error("ANTHROPIC_API_KEY manquante — rapport de secours uniquement")
-        return _fallback_report(errors, runs)
+        return charts_html + "\n" + _fallback_report(errors, runs), charts_dict
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     user_prompt = _build_user_prompt(errors, runs)
 
     try:
-        # On utilise le streaming car max_tokens est élevé (le rapport peut être long).
-        # Pour Opus 4.7 : adaptive thinking, pas de temperature/top_p/budget_tokens.
+        # Streaming + adaptive thinking + effort high (Opus 4.7).
         with client.messages.stream(
             model=CLAUDE_MODEL,
             max_tokens=8000,
@@ -149,25 +160,26 @@ def generate_weekly_report() -> str:
         ) as stream:
             final_message = stream.get_final_message()
 
-        # On extrait uniquement le contenu texte (les blocs thinking sont ignorés)
         html_parts = [
             block.text for block in final_message.content if block.type == "text"
         ]
-        html = "\n".join(html_parts).strip()
+        claude_html = "\n".join(html_parts).strip()
 
         log.info(
-            "Rapport généré (%d tokens entrée, %d tokens sortie)",
+            "Rapport généré (%d tokens entrée, %d tokens sortie, %d graphiques)",
             final_message.usage.input_tokens,
             final_message.usage.output_tokens,
+            len(charts_dict),
         )
-        return html
+        # Graphiques en tête, analyse Claude en dessous
+        return charts_html + "\n" + claude_html, charts_dict
 
     except anthropic.APIError as exc:
         log.exception("Erreur API Anthropic : %s", exc)
-        return _fallback_report(errors, runs)
+        return charts_html + "\n" + _fallback_report(errors, runs), charts_dict
     except Exception:
         log.exception("Erreur inattendue lors de la génération du rapport")
-        return _fallback_report(errors, runs)
+        return charts_html + "\n" + _fallback_report(errors, runs), charts_dict
 
 
 def _fallback_report(errors: list[dict], runs: list[dict]) -> str:

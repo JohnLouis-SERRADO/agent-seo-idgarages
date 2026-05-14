@@ -177,6 +177,28 @@ def get_errors_since(days: int = 7) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def get_errors_per_day(days: int = 7) -> dict[str, int]:
+    """Retourne {YYYY-MM-DD: nombre_d_erreurs} sur les N derniers jours.
+
+    Utilisé pour le graphique d'évolution dans le rapport hebdomadaire.
+    Les jours sans erreur ne sont pas dans le dict — le caller doit
+    boucler sur les N jours pour avoir les zéros.
+    """
+    since = datetime.now() - timedelta(days=days)
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT date(detected_at) AS day, COUNT(*) AS n
+              FROM errors
+             WHERE detected_at >= ?
+             GROUP BY day
+             ORDER BY day ASC
+            """,
+            (since.isoformat(),),
+        ).fetchall()
+        return {row["day"]: row["n"] for row in rows}
+
+
 # --- Cycles de crawl ----------------------------------------------------------
 
 

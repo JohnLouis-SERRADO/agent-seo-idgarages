@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import smtplib
 from datetime import datetime
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -60,8 +61,61 @@ def _wrap_html(body_html: str) -> str:
 </html>"""
 
 
-def send_weekly_report(html_body: str) -> bool:
-    """Envoie le rapport par email. Retourne True si succès, False sinon."""
+def _build_message(
+    subject: str,
+    full_html: str,
+    charts: dict[str, bytes] | None,
+) -> MIMEMultipart:
+    """Construit le MIMEMultipart selon qu'il y a des images inline ou pas.
+
+    Structure quand `charts` est fourni (RFC 2387, supporté par tous les clients) :
+
+        multipart/related
+        ├── multipart/alternative
+        │   └── text/html  ← référence les images via <img src="cid:XXX">
+        ├── image/png  ← Content-ID: <chart_trend>
+        ├── image/png  ← Content-ID: <chart_sections>
+        └── image/png  ← Content-ID: <chart_types>
+
+    Sans `charts`, on reste sur le simple multipart/alternative HTML-only.
+    """
+    if charts:
+        msg = MIMEMultipart("related")
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_FROM
+        msg["To"] = EMAIL_TO
+
+        # Le body HTML va dans un sous-conteneur alternative (best practice)
+        alt = MIMEMultipart("alternative")
+        msg.attach(alt)
+        alt.attach(MIMEText(full_html, "html", "utf-8"))
+
+        # Chaque image avec son Content-ID (référencé par <img src="cid:...">)
+        for cid, png_bytes in charts.items():
+            img = MIMEImage(png_bytes, _subtype="png")
+            img.add_header("Content-ID", f"<{cid}>")
+            img.add_header("Content-Disposition", "inline", filename=f"{cid}.png")
+            msg.attach(img)
+        return msg
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_FROM
+    msg["To"] = EMAIL_TO
+    msg.attach(MIMEText(full_html, "html", "utf-8"))
+    return msg
+
+
+def send_weekly_report(
+    html_body: str,
+    charts: dict[str, bytes] | None = None,
+) -> bool:
+    """Envoie le rapport par email avec graphiques inline optionnels.
+
+    `charts` : dict {content_id: png_bytes}. Le HTML doit déjà contenir des
+    balises `<img src="cid:content_id">` pour chaque entrée.
+    Retourne True si succès, False sinon.
+    """
     if not SMTP_USER or not SMTP_PASSWORD:
         log.error("Identifiants SMTP manquants — email non envoyé")
         return False
@@ -73,17 +127,16 @@ def send_weekly_report(html_body: str) -> bool:
     today = datetime.now().strftime("%d/%m/%Y")
     subject = f"📊 Rapport SEO hebdomadaire idgarages.com — {today}"
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = EMAIL_FROM
-    msg["To"] = EMAIL_TO
-
-    # On envoie en HTML uniquement ; les clients mail modernes le gèrent.
     full_html = _wrap_html(html_body)
-    msg.attach(MIMEText(full_html, "html", "utf-8"))
+    msg = _build_message(subject, full_html, charts)
 
     try:
-        log.info("Connexion à %s:%d en TLS…", SMTP_HOST, SMTP_PORT)
+        log.info(
+            "Connexion à %s:%d en TLS… (%d graphique%s inline)",
+            SMTP_HOST, SMTP_PORT,
+            len(charts) if charts else 0,
+            "s" if charts and len(charts) > 1 else "",
+        )
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)

@@ -55,7 +55,7 @@ def daily_crawl_job() -> None:
 
 
 def weekly_report_job() -> bool:
-    """Job hebdomadaire : génère le rapport et l'envoie par email. Vendredi 11h.
+    """Job hebdomadaire : génère le rapport (HTML + graphiques) et l'envoie.
 
     Retourne True si l'email a bien été envoyé, False sinon. Permet à la CLI
     de sortir avec un code != 0 quand l'envoi échoue (= workflow GitHub Actions
@@ -63,8 +63,8 @@ def weekly_report_job() -> bool:
     """
     log.info(">>> Lancement du job hebdomadaire (vendredi %s)", datetime.now())
     try:
-        html = generate_weekly_report()
-        ok = send_weekly_report(html)
+        html, charts = generate_weekly_report()
+        ok = send_weekly_report(html, charts=charts)
         if ok:
             log.info("Rapport hebdomadaire envoyé avec succès")
         else:
