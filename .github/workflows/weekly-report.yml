@@ -1,14 +1,11 @@
 name: Weekly SEO Report
 
-# Tourne le vendredi à 10h00 UTC.
-#   - En hiver  (CET, UTC+1) : 10h UTC = 11h Paris ✅
-#   - En été    (CEST, UTC+2): 10h UTC = 12h Paris (décalage d'1h accepté)
-# Si tu préfères "11h Paris toute l'année", passe à `0 9 * * 5` en été
-# (10h Paris en hiver dans ce cas).
+# ⏸️ AGENT EN PAUSE — l'envoi automatique du vendredi a été retiré.
+# Pour réactiver : remets le bloc `schedule` ci-dessous.
+#   schedule:
+#     - cron: "0 10 * * 5"   # vendredi 10h00 UTC (= 11h Paris en hiver)
 on:
-  schedule:
-    - cron: "0 10 * * 5"  # vendredi 10h UTC
-  workflow_dispatch:
+  workflow_dispatch:  # exécution manuelle uniquement (bouton "Run workflow")
 
 permissions:
   contents: read  # uniquement lecture — la DB n'est pas modifiée par le report

@@ -1,11 +1,11 @@
 name: Daily SEO Crawl
 
-# Tourne tous les jours à 03h00 UTC (≈ 04h en hiver / 05h en été à Paris).
-# Heure choisie pour éviter le trafic du site cible.
+# ⏸️ AGENT EN PAUSE — le déclenchement automatique quotidien a été retiré.
+# Pour réactiver : remets le bloc `schedule` ci-dessous.
+#   schedule:
+#     - cron: "0 3 * * *"   # tous les jours à 03h00 UTC
 on:
-  schedule:
-    - cron: "0 3 * * *"
-  workflow_dispatch:  # bouton "Run workflow" pour déclenchement manuel
+  workflow_dispatch:  # exécution manuelle uniquement (bouton "Run workflow")
 
 # Permission d'écriture pour committer la DB mise à jour sur la branche `data`.
 permissions:
