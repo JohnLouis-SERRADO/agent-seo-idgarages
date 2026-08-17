@@ -15,11 +15,25 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
 from config import DATABASE_PATH
+
+
+# SQLite écrit CURRENT_TIMESTAMP en UTC, au format "YYYY-MM-DD HH:MM:SS".
+# Les bornes temporelles doivent utiliser EXACTEMENT ce format, sinon la
+# comparaison de chaînes part en vrille : isoformat() insère un "T" (0x54)
+# là où SQLite met un espace (0x20), et toutes les lignes du jour-limite
+# passent alors sous le seuil quelle que soit leur heure.
+SQLITE_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def _cutoff(days: int) -> str:
+    """Borne basse d'une fenêtre de N jours, au format et fuseau de SQLite."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    return since.strftime(SQLITE_TIME_FORMAT)
 
 
 SCHEMA = """
@@ -31,6 +45,7 @@ CREATE TABLE IF NOT EXISTS urls (
     last_status     INTEGER,
     last_content_type TEXT,
     redirect_target TEXT,
+    found_on        TEXT,
     crawl_count     INTEGER DEFAULT 0
 );
 
@@ -60,10 +75,23 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
 """
 
 
+# Colonnes ajoutées après la mise en production. CREATE TABLE IF NOT EXISTS ne
+# touche pas une table existante : il faut un ALTER TABLE explicite, sinon la
+# base déjà présente sur la branche `data` reste au vieux schéma.
+MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "urls": [("found_on", "ALTER TABLE urls ADD COLUMN found_on TEXT")],
+}
+
+
 def init_db(path: Path = DATABASE_PATH) -> None:
-    """Crée les tables si elles n'existent pas. Idempotent."""
-    with sqlite3.connect(path) as conn:
+    """Crée les tables et applique les migrations manquantes. Idempotent."""
+    with get_conn(path) as conn:
         conn.executescript(SCHEMA)
+        for table, columns in MIGRATIONS.items():
+            existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for column, ddl in columns:
+                if column not in existing:
+                    conn.execute(ddl)
 
 
 @contextmanager
@@ -84,12 +112,17 @@ def get_conn(path: Path = DATABASE_PATH) -> Iterator[sqlite3.Connection]:
 # --- URLs ---------------------------------------------------------------------
 
 
-def add_url_if_unknown(url: str) -> bool:
-    """Insère une URL si elle n'existe pas déjà. Retourne True si ajout réussi."""
+def add_url_if_unknown(url: str, found_on: str | None = None) -> bool:
+    """Insère une URL si elle n'existe pas déjà. Retourne True si ajout réussi.
+
+    `found_on` est la page où le lien a été découvert : c'est elle qu'il faudra
+    corriger si l'URL se révèle cassée. On ne l'écrase pas sur une URL déjà
+    connue — la première page qui pointe dessus fait référence.
+    """
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT OR IGNORE INTO urls(url) VALUES (?)",
-            (url,),
+            "INSERT OR IGNORE INTO urls(url, found_on) VALUES (?, ?)",
+            (url, found_on),
         )
         return cur.rowcount > 0
 
@@ -116,23 +149,26 @@ def update_url_status(
         )
 
 
-def get_urls_to_crawl(limit: int) -> list[str]:
+def get_urls_to_crawl(limit: int) -> list[dict]:
     """Sélectionne les URLs à crawler ce cycle.
 
     Priorité : jamais vues (last_crawled IS NULL) d'abord, puis les plus
     anciennes. Cela garantit qu'on ne recrawle pas les mêmes pages chaque jour.
+
+    Retourne des dicts {url, found_on} : `found_on` suit l'URL jusqu'au
+    journal d'erreurs, pour qu'un 404 indique la page à corriger.
     """
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT url FROM urls
+            SELECT url, found_on FROM urls
              ORDER BY last_crawled IS NULL DESC,  -- NULL en premier
                       last_crawled ASC
              LIMIT ?
             """,
             (limit,),
         ).fetchall()
-        return [row["url"] for row in rows]
+        return [dict(row) for row in rows]
 
 
 def count_urls() -> int:
@@ -163,7 +199,6 @@ def log_error(
 
 def get_errors_since(days: int = 7) -> list[dict]:
     """Récupère toutes les erreurs des N derniers jours."""
-    since = datetime.now() - timedelta(days=days)
     with get_conn() as conn:
         rows = conn.execute(
             """
@@ -172,7 +207,7 @@ def get_errors_since(days: int = 7) -> list[dict]:
              WHERE detected_at >= ?
              ORDER BY detected_at DESC
             """,
-            (since.isoformat(),),
+            (_cutoff(days),),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -182,9 +217,9 @@ def get_errors_per_day(days: int = 7) -> dict[str, int]:
 
     Utilisé pour le graphique d'évolution dans le rapport hebdomadaire.
     Les jours sans erreur ne sont pas dans le dict — le caller doit
-    boucler sur les N jours pour avoir les zéros.
+    boucler sur les N jours pour avoir les zéros. Les jours sont en UTC,
+    comme les timestamps stockés.
     """
-    since = datetime.now() - timedelta(days=days)
     with get_conn() as conn:
         rows = conn.execute(
             """
@@ -194,7 +229,7 @@ def get_errors_per_day(days: int = 7) -> dict[str, int]:
              GROUP BY day
              ORDER BY day ASC
             """,
-            (since.isoformat(),),
+            (_cutoff(days),),
         ).fetchall()
         return {row["day"]: row["n"] for row in rows}
 
@@ -227,7 +262,6 @@ def end_crawl_run(run_id: int, pages: int, errors: int, status: str = "success")
 
 def get_recent_runs(days: int = 7) -> list[dict]:
     """Retourne les cycles de crawl des N derniers jours."""
-    since = datetime.now() - timedelta(days=days)
     with get_conn() as conn:
         rows = conn.execute(
             """
@@ -236,6 +270,6 @@ def get_recent_runs(days: int = 7) -> list[dict]:
              WHERE started_at >= ?
              ORDER BY started_at DESC
             """,
-            (since.isoformat(),),
+            (_cutoff(days),),
         ).fetchall()
         return [dict(row) for row in rows]

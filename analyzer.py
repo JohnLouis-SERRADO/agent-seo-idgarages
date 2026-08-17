@@ -4,8 +4,12 @@ L'agent ne se contente pas de lister les erreurs : il les regroupe, identifie
 les patterns (sections entières cassées, redirects en masse, etc.) et produit
 des recommandations SEO priorisées.
 
-Modèle : claude-opus-4-7 avec adaptive thinking (le modèle décide combien
-réfléchir selon la complexité du rapport).
+Modèle : voir config.CLAUDE_MODEL, avec adaptive thinking (le modèle décide
+combien réfléchir selon la complexité du rapport).
+
+Le rapport n'est jamais envoyé « à moitié » en silence : un refus ou une
+réponse vide bascule sur le rapport de secours local, et une troncature
+(stop_reason == "max_tokens") ajoute un bandeau d'avertissement visible.
 """
 
 from __future__ import annotations
@@ -13,12 +17,13 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from datetime import datetime
+from html import escape
 from urllib.parse import urlparse
 
 import anthropic
 
 from charts import build_weekly_charts
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, TARGET_SITE
+from config import ANTHROPIC_API_KEY, CLAUDE_MAX_TOKENS, CLAUDE_MODEL, TARGET_SITE
 from database import get_errors_per_day, get_errors_since, get_recent_runs
 
 log = logging.getLogger(__name__)
@@ -42,7 +47,9 @@ URLs concernées (max 5 exemples), action recommandée.
    - <h2>🗂️ Erreurs par section du site</h2> : regroupe les URLs par section \
 (ex: /devis/, /garages/, /blog/) avec compteurs par type d'erreur.
    - <h2>📋 Détail des erreurs</h2> : tableau HTML des erreurs les plus \
-significatives (max 30 lignes), colonnes : URL, Type, Code, Date.
+significatives (max 30 lignes), colonnes : URL, Type, Code, Trouvée sur, Date. \
+La colonne « Trouvée sur » est la page qui contient le lien cassé — c'est elle \
+qu'il faut corriger. Mets « — » quand l'information est absente.
    - <h2>💡 Recommandations</h2> : conseils techniques généraux (ex: configurer \
 des redirections 301, vérifier le sitemap, etc.).
 
@@ -50,14 +57,29 @@ des redirections 301, vérifier le sitemap, etc.).
 
 4. **Intelligence** : identifie les patterns. Si 50 URLs /blog/* retournent 404, \
 dis-le explicitement et propose une cause probable (section migrée ? CMS cassé ?). \
-Ne te contente pas de lister.
+Ne te contente pas de lister. Quand plusieurs erreurs partagent la même page \
+d'origine (« ← lien depuis »), signale cette page en priorité : un seul \
+correctif y règle plusieurs liens cassés.
 
-5. **Couleurs** : utilise des badges colorés inline pour les codes HTTP :
+5. **Concision** : va à l'essentiel. Pas de préambule, pas de redite entre les \
+sections, pas de section « alternatives envisagées ». Le lecteur est un \
+développeur pressé qui veut savoir quoi corriger en premier.
+
+6. **Couleurs** : utilise des badges colorés inline pour les codes HTTP :
    - 404 : background:#ffd6d6; color:#a00
    - 5xx : background:#ffb3b3; color:#700
    - 3xx (chaînes) : background:#fff3b3; color:#806000
    - timeout/connection : background:#e0e0e0; color:#444
 """
+
+
+_TRUNCATION_NOTICE = (
+    '<p style="background:#fff3b3;color:#806000;padding:10px;'
+    'border-radius:4px;font-weight:bold">'
+    "⚠️ Rapport incomplet : la limite de tokens a été atteinte et l'analyse "
+    "ci-dessous est tronquée. Augmente <code>CLAUDE_MAX_TOKENS</code> pour "
+    "obtenir le rapport entier.</p>"
+)
 
 
 def _build_user_prompt(errors: list[dict], runs: list[dict]) -> str:
@@ -93,6 +115,8 @@ def _build_user_prompt(errors: list[dict], runs: list[dict]) -> str:
         line = f"- [{e['error_type']}] {e['url']}"
         if e.get("status_code"):
             line += f" (HTTP {e['status_code']})"
+        if e.get("found_on"):
+            line += f" ← lien depuis {e['found_on']}"
         if e.get("details"):
             line += f" — {e['details'][:120]}"
         error_lines.append(line)
@@ -149,10 +173,12 @@ def generate_weekly_report() -> tuple[str, dict[str, bytes]]:
     user_prompt = _build_user_prompt(errors, runs)
 
     try:
-        # Streaming + adaptive thinking + effort high (Opus 4.7).
+        # Streaming + adaptive thinking + effort high.
+        # max_tokens plafonne le thinking ET le HTML : il doit être large,
+        # sinon le rapport est coupé en plein milieu d'une balise.
         with client.messages.stream(
             model=CLAUDE_MODEL,
-            max_tokens=8000,
+            max_tokens=CLAUDE_MAX_TOKENS,
             thinking={"type": "adaptive"},
             output_config={"effort": "high"},
             system=SYSTEM_PROMPT,
@@ -160,10 +186,30 @@ def generate_weekly_report() -> tuple[str, dict[str, bytes]]:
         ) as stream:
             final_message = stream.get_final_message()
 
+        # Un refus renvoie un HTTP 200 avec un contenu vide ou partiel :
+        # sans ce test, on enverrait un mail vide.
+        if final_message.stop_reason == "refusal":
+            log.error("Requête refusée par Claude — bascule sur le rapport de secours")
+            return charts_html + "\n" + _fallback_report(errors, runs), charts_dict
+
         html_parts = [
             block.text for block in final_message.content if block.type == "text"
         ]
         claude_html = "\n".join(html_parts).strip()
+
+        if not claude_html:
+            log.error("Réponse Claude sans contenu texte — bascule sur le rapport de secours")
+            return charts_html + "\n" + _fallback_report(errors, runs), charts_dict
+
+        # Rapport tronqué : on le dit dans le mail au lieu d'envoyer un HTML
+        # coupé net qui a l'air complet.
+        if final_message.stop_reason == "max_tokens":
+            log.error(
+                "Rapport tronqué : plafond de %d tokens atteint. "
+                "Augmente CLAUDE_MAX_TOKENS.",
+                CLAUDE_MAX_TOKENS,
+            )
+            claude_html = _TRUNCATION_NOTICE + claude_html
 
         log.info(
             "Rapport généré (%d tokens entrée, %d tokens sortie, %d graphiques)",
@@ -188,12 +234,16 @@ def _fallback_report(errors: list[dict], runs: list[dict]) -> str:
     total_crawled = sum(r["pages_crawled"] for r in runs)
 
     rows = "".join(
-        f"<tr><td>{e['url'][:80]}</td><td>{e['error_type']}</td>"
-        f"<td>{e.get('status_code', '-')}</td><td>{e['detected_at'][:16]}</td></tr>"
+        f"<tr><td>{escape(e['url'][:80])}</td><td>{escape(e['error_type'])}</td>"
+        f"<td>{escape(str(e.get('status_code') or '—'))}</td>"
+        f"<td>{escape((e.get('found_on') or '—')[:80])}</td>"
+        f"<td>{escape((e.get('detected_at') or '')[:16])}</td></tr>"
         for e in errors[:50]
     )
 
-    type_summary = "".join(f"<li>{t} : <strong>{n}</strong></li>" for t, n in by_type.most_common())
+    type_summary = "".join(
+        f"<li>{escape(t)} : <strong>{n}</strong></li>" for t, n in by_type.most_common()
+    )
 
     return f"""
     <h2>📊 Rapport SEO hebdomadaire (mode de secours)</h2>
@@ -204,7 +254,7 @@ def _fallback_report(errors: list[dict], runs: list[dict]) -> str:
     <ul>{type_summary}</ul>
     <h3>50 premières erreurs</h3>
     <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse">
-      <tr><th>URL</th><th>Type</th><th>Code</th><th>Détectée</th></tr>
+      <tr><th>URL</th><th>Type</th><th>Code</th><th>Trouvée sur</th><th>Détectée</th></tr>
       {rows}
     </table>
     <p style="color:#666;font-size:12px">Généré le {datetime.now():%Y-%m-%d %H:%M}</p>

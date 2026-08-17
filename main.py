@@ -41,17 +41,34 @@ log = logging.getLogger("agent")
 # --- Jobs planifiés -----------------------------------------------------------
 
 
-def daily_crawl_job() -> None:
-    """Job quotidien : crawle ~500 pages, met à jour SQLite. Tourne tous les jours."""
+def daily_crawl_job() -> bool:
+    """Job quotidien : crawle jusqu'à MAX_PAGES_PER_DAY pages, met à jour SQLite.
+
+    Retourne True si le cycle a réellement visité des pages. Un cycle qui
+    sélectionne des URLs mais n'en crawle aucune (site injoignable, robots.txt
+    bloquant) est un ÉCHEC, pas un succès à 0 erreur : la CLI sort alors en
+    code != 0 pour que le workflow GitHub Actions passe au rouge.
+    """
     log.info(">>> Lancement du job quotidien de crawl")
     try:
         stats = run_daily_crawl()
-        log.info(
-            "Crawl OK : %d pages, %d erreurs, %d nouvelles URLs",
-            stats.pages_crawled, stats.errors_found, stats.new_urls_discovered,
-        )
     except Exception:
         log.exception("Crash du job de crawl — l'agent continue de tourner")
+        return False
+
+    if stats.urls_selected and not stats.pages_crawled:
+        log.error(
+            "Crawl en échec : %d URLs sélectionnées, aucune visitée",
+            stats.urls_selected,
+        )
+        return False
+
+    log.info(
+        "Crawl OK : %d pages, %d erreurs, %d nouvelles URLs%s",
+        stats.pages_crawled, stats.errors_found, stats.new_urls_discovered,
+        " (budget temps épuisé)" if stats.time_budget_exhausted else "",
+    )
+    return True
 
 
 def weekly_report_job() -> bool:
@@ -61,7 +78,10 @@ def weekly_report_job() -> bool:
     de sortir avec un code != 0 quand l'envoi échoue (= workflow GitHub Actions
     en rouge), au lieu de planter en silence.
     """
-    log.info(">>> Lancement du job hebdomadaire (vendredi %s)", datetime.now())
+    log.info(
+        ">>> Lancement du job hebdomadaire (%s %s)",
+        config.WEEKLY_REPORT_DAY, datetime.now(),
+    )
     try:
         html, charts = generate_weekly_report()
         ok = send_weekly_report(html, charts=charts)
@@ -132,7 +152,10 @@ def main() -> None:
     if arg == "init":
         log.info("Base de données initialisée à %s", config.DATABASE_PATH)
     elif arg == "crawl":
-        daily_crawl_job()
+        # Code de sortie != 0 si le cycle n'a rien pu visiter → workflow rouge,
+        # au lieu d'un faux « tout va bien » propagé jusqu'au rapport.
+        if not daily_crawl_job():
+            sys.exit(1)
     elif arg == "report":
         # Code de sortie != 0 si l'envoi a échoué → workflow GitHub Actions rouge.
         if not weekly_report_job():

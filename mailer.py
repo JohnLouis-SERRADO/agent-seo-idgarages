@@ -14,6 +14,7 @@ from datetime import datetime
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from urllib.parse import urlparse
 
 from config import (
     EMAIL_FROM,
@@ -23,9 +24,15 @@ from config import (
     SMTP_PORT,
     SMTP_USER,
     TARGET_SITE,
+    WEEKLY_REPORT_DAY,
+    WEEKLY_REPORT_TIME,
 )
 
 log = logging.getLogger(__name__)
+
+# Nom d'affichage du site surveillé, dérivé de TARGET_SITE : l'objet du mail
+# doit suivre la config, pas rester figé sur idgarages.com.
+SITE_LABEL = urlparse(TARGET_SITE).netloc or TARGET_SITE
 
 
 def _wrap_html(body_html: str) -> str:
@@ -55,7 +62,7 @@ def _wrap_html(body_html: str) -> str:
   {body_html}
   <div class="footer">
     Agent SEO automatisé · Analyse propulsée par Claude (Anthropic)<br>
-    Ce rapport est généré automatiquement chaque vendredi à 11h.
+    Planification configurée : {WEEKLY_REPORT_DAY} à {WEEKLY_REPORT_TIME}.
   </div>
 </body>
 </html>"""
@@ -125,7 +132,7 @@ def send_weekly_report(
         return False
 
     today = datetime.now().strftime("%d/%m/%Y")
-    subject = f"📊 Rapport SEO hebdomadaire idgarages.com — {today}"
+    subject = f"📊 Rapport SEO hebdomadaire {SITE_LABEL} — {today}"
 
     full_html = _wrap_html(html_body)
     msg = _build_message(subject, full_html, charts)

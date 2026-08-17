@@ -9,7 +9,7 @@ Les PNG sont écrits à côté de ce fichier (chart_trend.png, etc.).
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Permet d'importer charts.py depuis la racine du projet
@@ -29,7 +29,8 @@ def realistic_sample_data() -> tuple[list[dict], dict[str, int]]:
     la plus d'erreurs en valeur absolue. Les 404 dominent (URLs supprimées), suivis
     des chaînes de redirection (migrations passées), puis des 5xx ponctuels.
     """
-    today = datetime.now().date()
+    # UTC, comme les timestamps stockés et comme chart_errors_per_day()
+    today = datetime.now(timezone.utc).date()
 
     # Distribution sur 7 jours : pic mercredi (= jour après un déploiement ?)
     daily_counts = {

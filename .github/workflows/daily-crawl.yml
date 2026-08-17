@@ -14,6 +14,9 @@ permissions:
 jobs:
   crawl:
     runs-on: ubuntu-latest
+    # Filet de sécurité uniquement : l'agent s'arrête tout seul au bout de
+    # MAX_CRAWL_MINUTES (20 par défaut) et sauvegarde son travail. Ce timeout
+    # ne doit jamais se déclencher — s'il se déclenche, baisse MAX_CRAWL_MINUTES.
     timeout-minutes: 30
 
     steps:
@@ -52,24 +55,34 @@ jobs:
           fi
 
       # ─── Crawl ────────────────────────────────────────────────────────────
+      # Le crawl ne sert qu'à remplir la base : ni clé API ni SMTP ici.
+      # Sort en code != 0 si aucune page n'a pu être visitée.
       - name: Run daily crawl
         env:
-          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
           TARGET_SITE:         ${{ vars.TARGET_SITE }}
           MAX_PAGES_PER_DAY:   ${{ vars.MAX_PAGES_PER_DAY }}
+          MAX_CRAWL_MINUTES:   ${{ vars.MAX_CRAWL_MINUTES }}
+          MAX_REDIRECT_HOPS:   ${{ vars.MAX_REDIRECT_HOPS }}
+          CRAWL_DELAY_SECONDS: ${{ vars.CRAWL_DELAY_SECONDS }}
           RESPECT_ROBOTS_TXT:  ${{ vars.RESPECT_ROBOTS_TXT }}
-          SMTP_USER:           ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD:       ${{ secrets.SMTP_PASSWORD }}
-          EMAIL_FROM:          ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO:            ${{ secrets.EMAIL_TO }}
         run: python main.py crawl
 
       # ─── Sauvegarde de la DB sur la branche `data` ────────────────────────
       # Stratégie : on garde un seul commit dans `data` (force-push). Ça évite
       # que la branche grossisse de 10 Mo par jour pour rien. Le passé n'est
       # pas crucial — ce qui compte c'est la photo la plus récente.
+      # `if: always()` : même un cycle interrompu (timeout, crash à mi-parcours)
+      # a découvert des URLs et journalisé des erreurs. Les jeter ferait
+      # repartir de zéro le lendemain — et au tout premier run, la branche
+      # `data` ne serait jamais créée.
       - name: Save SQLite DB to data branch
+        if: always()
         run: |
+          if [ ! -f data/seo_monitor.db ]; then
+            echo "Aucune base à sauvegarder (le job a échoué avant sa création) — étape ignorée."
+            exit 0
+          fi
+
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 

@@ -27,14 +27,26 @@ DATA_DIR.mkdir(exist_ok=True)
 
 # --- API Anthropic ---
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-opus-4-7"  # modèle le plus capable, idéal pour l'analyse SEO
+CLAUDE_MODEL = "claude-opus-5"  # modèle le plus capable, idéal pour l'analyse SEO
+
+# Plafond de tokens pour un rapport. Le thinking adaptatif partage ce budget
+# avec le HTML produit : trop bas, le rapport est tronqué en plein milieu.
+CLAUDE_MAX_TOKENS = int(_env("CLAUDE_MAX_TOKENS", "32000"))
 
 # --- Cible du crawl ---
 TARGET_SITE = _env("TARGET_SITE", "https://www.idgarages.com").rstrip("/")
 MAX_PAGES_PER_DAY = int(_env("MAX_PAGES_PER_DAY", "500"))
 CRAWL_DELAY_SECONDS = float(_env("CRAWL_DELAY_SECONDS", "1.0"))
 REQUEST_TIMEOUT = int(_env("REQUEST_TIMEOUT", "15"))
-USER_AGENT = "IDGaragesSEOBot/1.0 (+monitoring interne)"
+
+# Budget temps d'un cycle. Le crawl s'arrête proprement quand il est épuisé et
+# sauvegarde ce qu'il a trouvé ; la rotation reprendra où on s'est arrêté au
+# cycle suivant. Sans ça, MAX_PAGES_PER_DAY peut dépasser le timeout du runner
+# GitHub Actions, qui tue le job et fait perdre tout le travail du cycle.
+MAX_CRAWL_MINUTES = float(_env("MAX_CRAWL_MINUTES", "20"))
+
+# Nombre de redirections à partir duquel on signale une chaîne trop longue.
+MAX_REDIRECT_HOPS = int(_env("MAX_REDIRECT_HOPS", "3"))
 
 # Respecter le robots.txt du site cible ?
 # - True (défaut) : on s'arrête sur les pages interdites par robots.txt

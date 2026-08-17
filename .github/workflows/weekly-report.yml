@@ -42,10 +42,13 @@ jobs:
 
       - name: Generate and send weekly report
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TARGET_SITE:       ${{ vars.TARGET_SITE }}
-          SMTP_USER:         ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD:     ${{ secrets.SMTP_PASSWORD }}
-          EMAIL_FROM:        ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO:          ${{ secrets.EMAIL_TO }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MAX_TOKENS:  ${{ vars.CLAUDE_MAX_TOKENS }}
+          TARGET_SITE:        ${{ vars.TARGET_SITE }}
+          WEEKLY_REPORT_DAY:  ${{ vars.WEEKLY_REPORT_DAY }}
+          WEEKLY_REPORT_TIME: ${{ vars.WEEKLY_REPORT_TIME }}
+          SMTP_USER:          ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:      ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM:         ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:           ${{ secrets.EMAIL_TO }}
         run: python main.py report

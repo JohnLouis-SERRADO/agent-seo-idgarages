@@ -18,7 +18,7 @@ from __future__ import annotations
 import io
 import logging
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import matplotlib
@@ -54,18 +54,16 @@ _BASE_STYLE = {
 # Jours de la semaine en français (d.weekday() : 0 = lundi … 6 = dimanche)
 _DAY_NAMES_FR = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
 
-# Libellés humains pour chaque type d'erreur stocké en base.
-# Les types `client_error_<code>` sont dynamiques (code HTTP exact), on les
-# gère séparément dans _humanize_error_type().
+# Libellés humains pour chaque type d'erreur réellement produit par le crawler
+# (voir crawler.crawl_page). Les types `client_error_<code>` sont dynamiques
+# (code HTTP exact), on les gère séparément dans _humanize_error_type().
 _ERROR_LABELS_FR: dict[str, str] = {
     "not_found_404":         "Page introuvable (404)",
     "server_error_5xx":      "Erreur serveur (5xx)",
     "forbidden_403":         "Accès refusé (403)",
     "long_redirect_chain":   "Redirections en chaîne",
     "timeout":               "Délai de réponse dépassé",
-    "connection_error":      "Erreur de connexion",
     "navigation_error":      "Erreur de navigation",
-    "unexpected_error":      "Erreur imprévue",
 }
 
 
@@ -95,8 +93,10 @@ def chart_errors_per_day(errors_per_day: dict[str, int], days: int = 7) -> bytes
     """Bar chart vertical : nb d'erreurs sur les `days` derniers jours."""
     plt.rcParams.update(_BASE_STYLE)
 
-    # On reconstruit la séquence complète (y compris jours à 0)
-    today = datetime.now().date()
+    # On reconstruit la séquence complète (y compris jours à 0).
+    # En UTC, comme les timestamps stockés par SQLite : sinon, en heure de
+    # Paris, le graphique affiche un jour futur vide et perd le plus ancien.
+    today = datetime.now(timezone.utc).date()
     dates = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
     # Libellés en français (Lun, Mar…) — on n'utilise pas la locale système
     # car elle dépend de l'environnement (CI Ubuntu = en_US par défaut)
