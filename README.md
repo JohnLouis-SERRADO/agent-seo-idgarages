@@ -355,19 +355,15 @@ Le repo contient déjà deux workflows GitHub Actions prêts à l'emploi dans `.
 
 L'étape de sauvegarde tourne en `if: always()` : même un cycle interrompu a découvert des URLs et journalisé des erreurs, et les jeter ferait repartir de zéro le lendemain.
 
-### ▶️ Réactiver la planification automatique
+### ▶️ Planification automatique
 
-Les deux workflows sont en `workflow_dispatch` seul. Pour les remettre sur cron, décommente le bloc en tête de chaque fichier :
+Les deux workflows portent leur `schedule:` — `0 3 * * *` pour le crawl, `0 10 * * 5` pour le rapport — en plus du `workflow_dispatch` qui reste disponible à tout moment.
 
-```yaml
-on:
-  schedule:
-    - cron: "0 3 * * *"    # daily-crawl.yml   — tous les jours 03h00 UTC
-    - cron: "0 10 * * 5"   # weekly-report.yml — vendredi 10h00 UTC (11h Paris en hiver)
-  workflow_dispatch:
-```
+**Condition indispensable :** GitHub Actions n'exécute les crons que depuis la **branche par défaut** du dépôt. Sur une branche de travail, le bloc `schedule:` est présent mais ne se déclenche jamais. Vérifie dans *Settings → Branches* quelle est la branche par défaut, et fusionne-y ces workflows pour que l'agent tourne réellement.
 
-> ⚠️ Le rapport hebdomadaire **envoie un vrai email** et consomme du crédit API. Vérifie la config avec un lancement manuel avant de réactiver le cron.
+Pour remettre l'agent en pause : retire les deux lignes `schedule:` / `- cron:` en tête de chaque fichier, ou désactive le workflow depuis l'onglet *Actions*.
+
+> ⚠️ Le rapport hebdomadaire **envoie un vrai email** et consomme du crédit API. Fais un lancement manuel de bout en bout avant de compter sur le cron.
 
 ### Configuration des secrets et variables (~3 minutes)
 
