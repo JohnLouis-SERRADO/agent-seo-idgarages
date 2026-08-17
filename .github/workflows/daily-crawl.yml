@@ -1,11 +1,11 @@
 name: Daily SEO Crawl
 
-# ⏸️ AGENT EN PAUSE — le déclenchement automatique quotidien a été retiré.
-# Pour réactiver : remets le bloc `schedule` ci-dessous.
-#   schedule:
-#     - cron: "0 3 * * *"   # tous les jours à 03h00 UTC
+# ⚠️ Les crons GitHub Actions ne se déclenchent QUE depuis la branche par
+# défaut du dépôt. Sur une branche de travail, ce bloc `schedule` est inerte.
 on:
-  workflow_dispatch:  # exécution manuelle uniquement (bouton "Run workflow")
+  schedule:
+    - cron: "0 3 * * *"   # tous les jours à 03h00 UTC
+  workflow_dispatch:      # et toujours l'exécution manuelle à la demande
 
 # Permission d'écriture pour committer la DB mise à jour sur la branche `data`.
 permissions:

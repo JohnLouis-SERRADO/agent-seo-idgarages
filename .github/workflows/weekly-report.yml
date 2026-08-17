@@ -1,11 +1,11 @@
 name: Weekly SEO Report
 
-# ⏸️ AGENT EN PAUSE — l'envoi automatique du vendredi a été retiré.
-# Pour réactiver : remets le bloc `schedule` ci-dessous.
-#   schedule:
-#     - cron: "0 10 * * 5"   # vendredi 10h00 UTC (= 11h Paris en hiver)
+# ⚠️ Les crons GitHub Actions ne se déclenchent QUE depuis la branche par
+# défaut du dépôt. Sur une branche de travail, ce bloc `schedule` est inerte.
 on:
-  workflow_dispatch:  # exécution manuelle uniquement (bouton "Run workflow")
+  schedule:
+    - cron: "0 10 * * 5"   # vendredi 10h00 UTC (= 11h Paris en hiver)
+  workflow_dispatch:       # et toujours l'exécution manuelle à la demande
 
 permissions:
   contents: read  # uniquement lecture — la DB n'est pas modifiée par le report

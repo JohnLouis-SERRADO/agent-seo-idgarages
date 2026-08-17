@@ -2,17 +2,17 @@
 
 Un agent Python qui crawle idgarages.com, détecte les erreurs SEO (404, 403, 5xx, chaînes de redirection, timeouts) **en gardant trace de la page qui contient chaque lien cassé**, les stocke en local, et envoie un **rapport hebdomadaire intelligent** synthétisé par **Claude (Anthropic)**.
 
-> ## ⏸️ L'agent est actuellement EN PAUSE
+> ## ▶️ Planification réactivée — une condition à connaître
 >
-> Les déclencheurs automatiques ont été retirés des deux workflows GitHub Actions : **rien ne tourne tout seul**. Les workflows restent lançables à la main (bouton *Run workflow*).
+> Les blocs `schedule:` sont rétablis dans les deux workflows : crawl quotidien à 03h00 UTC, rapport le vendredi à 10h00 UTC.
 >
-> Pour réactiver la planification, décommente le bloc `schedule:` en tête de `.github/workflows/daily-crawl.yml` et `.github/workflows/weekly-report.yml` — voir §8.
+> **Mais un cron GitHub Actions ne se déclenche que depuis la branche par défaut du dépôt.** Tant que ces workflows vivent sur une branche de travail, le `schedule:` est inerte et seul le lancement manuel (*Run workflow*) fonctionne. Il faut fusionner dans la branche par défaut pour que l'agent tourne réellement.
 
 ---
 
 ## 1. Vue d'ensemble du fonctionnement
 
-Les horaires ci-dessous sont ceux **configurés**. Ils ne s'appliquent qu'une fois la planification réactivée (voir l'encadré ci-dessus), ou en mode démon local (§4).
+Les horaires ci-dessous sont ceux **configurés**. Ils s'appliquent dès que les workflows sont sur la branche par défaut (voir l'encadré ci-dessus), ou en mode démon local (§4).
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
